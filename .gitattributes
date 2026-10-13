@@ -1,0 +1,9 @@
+# Shell scripts and action metadata run on Linux runners: always use LF.
+* text=auto
+*.sh   text eol=lf
+*.bats text eol=lf
+*.yml  text eol=lf
+*.json text eol=lf
+*.md   text eol=lf
+CHANGELOG text eol=lf
+*.png  binary

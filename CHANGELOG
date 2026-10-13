@@ -1,5 +1,83 @@
 # Changelog
 
+## [v3.3.0] - 2026-10-13
+
+### 🎯 New Features
+
+- **🔗 Compare Link** (`show_compare_link`): Adds a `🔗 View full diff` link to the GitHub compare page below the changelog
+  - Disabled by default — set to `"true"` to enable
+
+- **✂️ Limit Listed Commits** (`max_commits`): Lists only the N most recent commits and summarizes the rest as `…and N more commit(s)` with a link to the full diff
+  - Empty (default) or `0` shows all commits, exactly as before
+
+- **📅 Changelog Fallback** (`since_ref`): When there is no previous successful run (for example the first run on a branch), the changelog now starts from `since_ref` (tag, branch or SHA), or covers the **last 30 days** when `since_ref` is not set
+  - Previously the first run had no changelog at all
+  - "Last Deploy" in statistics is only shown when the range starts at a previous run
+
+- **🚦 Explicit Status Handling** (`notify_on_cancel`): Cancelled runs get their own message (`⚠️ … was cancelled.`) instead of a success-style deployment message
+  - Disabled by default — set `notify_on_cancel: "true"` and pass `workflow_status: ${{ job.status }}`
+  - Failure and cancelled messages now include the run duration and can be previewed with `test_mode`
+
+- **🎨 Environment Emoji Map** (`environment_emojis`): Map branch globs to emojis, one `<glob>=<emoji>` per line (case-insensitive, first match wins). Falls back to `staging_emoji` / `production_emoji`
+
+- **📤 Action Outputs**: `message_id`, `message`, `commit_count`, `previous_sha`, `compare_url` for use in later workflow steps
+
+- **🔁 Retry with Backoff**: Network errors, HTTP 429 and HTTP 5xx from ClickUp are retried up to 3 times with exponential backoff (honors `Retry-After`)
+
+### 🐛 Bug Fixes
+
+- **Test mode left temporary files behind**: a trailing `\` turned the cleanup command into arguments of the preview script
+- **Backslashes in commit messages, titles and descriptions were interpreted** (`\t`, `\n`, `\c`…) because messages were printed with `echo -e`; content is now sent verbatim
+- **Copilot agent attribution** used the first `Co-authored-by` found in *any* commit; it now uses the commit's own co-author, falling back to another Copilot commit's co-author
+- **Breaking-change marker dropped**: `refactor!: …` was rendered as `**Refactor:**`; it is now `**Refactor!:**`
+- **Duration was always `unknown` on macOS runners**: timestamps are now parsed with `jq` instead of GNU `date -d`
+- **Co-author names with an apostrophe** (e.g. `O'Brien`) could abort commit processing
+- **Statistics** no longer print `integer expression expected` errors when a count is zero; fix/feat/refactor counts include breaking variants (`fix!:`)
+- **Workspace names** resolved in test mode are sanitized before being loaded by the preview script
+
+### 🔒 Security
+
+- Inputs are passed to scripts through `env:` instead of being pasted into shell code, so quotes or `$(...)` in `title`/`description` can no longer break or alter the scripts
+- `GITHUB_TOKEN` and other values are no longer exported to `$GITHUB_ENV` (they leaked into later steps of the calling job)
+- The ClickUp API token is passed to `curl` through a header file instead of command-line arguments
+
+### 🧪 Quality
+
+- Added a `bats` unit test suite (`tests/`) and a CI workflow running ShellCheck, actionlint and the tests on pull requests
+- The staging test workflow now runs the sub-actions from the checked-out branch instead of the last published tag, and previews failure/cancelled messages and new options
+- Added `.gitattributes` to keep LF line endings for scripts and YAML
+
+### ⚠️ Behaviour Changes
+
+- With `if: always()`, a **cancelled** run no longer sends the normal deployment message. Set `notify_on_cancel: "true"` to get a cancellation message
+- Environment variables `CLICKUP_WORKSPACE_ID`, `CLICKUP_PROJECT_NAME`, `GITHUB_TOKEN`, `REPO_NAME`, `TRIGGERING_ACTOR`, `STAGING_EMOJI` and `PRODUCTION_EMOJI` are no longer added to the calling job's environment
+- The first run on a branch now shows commits from the last 30 days (or since `since_ref`) instead of no changelog
+
+### 📝 Migration Guide
+
+No input was removed or renamed. To adopt the new features:
+
+```yaml
+- uses: architweb/ClickUpNotification@v3.3.0
+  id: clickup
+  if: always()
+  with:
+    # ... existing inputs ...
+    show_compare_link: "true"      # 🔗 View full diff
+    max_commits: "20"              # list the 20 most recent commits
+    since_ref: "v1.0.0"            # first-run fallback (default: last 30 days)
+    notify_on_failure: "true"
+    notify_on_cancel: "true"
+    workflow_status: ${{ job.status }}
+    environment_emojis: |
+      release/beta=🅱️
+      *hotfix*=🔥
+
+- run: echo "Sent ClickUp message ${{ steps.clickup.outputs.message_id }}"
+```
+
+---
+
 ## [v3.2.0] - 2026-05-11
 
 ### 🎯 New Features
@@ -138,7 +216,7 @@ If you were using `sort_commits_alphabetically: "true"`:
 - **Name Resolution**: Automatically resolve workspace and channel IDs to human-readable names
 - **Enhanced Error Handling**: Improved validation and error reporting
 - **Better Separation of Concerns**: Each script handles a single responsibility
-- **Enhanced Link Format**: Changed task links from `[\`ID\`]`to`[**_ID_**]` for better cross-platform compatibility
+- **Enhanced Link Format**: Changed task links from `[\`ID\`]`to`[***ID***]` for better cross-platform compatibility
 
 ### 🐛 Bug Fixes
 

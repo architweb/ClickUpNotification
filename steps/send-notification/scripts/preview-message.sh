@@ -9,6 +9,7 @@ WORKSPACE_ID="$3"
 
 # Load resolved names
 if [ -f "$NAMES_FILE" ]; then
+  # shellcheck source=/dev/null
   source "$NAMES_FILE"
 fi
 
@@ -24,7 +25,7 @@ echo ""
 cat "$MESSAGE_FILE"
 echo ""
 
-MESSAGE_LENGTH=$(cat "$MESSAGE_FILE" | wc -c)
+MESSAGE_LENGTH=$(wc -c < "$MESSAGE_FILE" | tr -d " ")
 
 echo "═══════════════════════════════════════════════════════════════"
 echo "📝 MESSAGE DETAILS:"

@@ -58,6 +58,18 @@ inputs:
     description: "Show PR links next to commit references"
     required: false
     default: "false"
+  show_compare_link:
+    description: "Add a 'View full diff' link to the GitHub compare page below the changelog"
+    required: false
+    default: "false"
+  max_commits:
+    description: "Maximum number of commits to list; older ones are summarized as '…and N more'. Empty or 0 shows all"
+    required: false
+    default: ""
+  since_ref:
+    description: "Tag, branch or SHA to start the changelog from when no previous successful run exists (default: last 30 days)"
+    required: false
+    default: ""
   staging_emoji:
     description: "Emoji used for staging branch notifications"
     required: false
@@ -66,48 +78,94 @@ inputs:
     description: "Emoji used for production branch notifications"
     required: false
     default: "🚀"
+  environment_emojis:
+    description: "Optional '<branch glob>=<emoji>' lines (e.g. 'release/beta=🅱️'); first match wins over staging/production emojis"
+    required: false
+    default: ""
   notify_on_failure:
     description: "Send notification when workflow fails (use with workflow_status input)"
     required: false
     default: "false"
+  notify_on_cancel:
+    description: "Send notification when workflow is cancelled (use with workflow_status input)"
+    required: false
+    default: "false"
   workflow_status:
-    description: "Current job status for failure notifications (pass ${ job.status })"
+    description: "Current job status (pass job.status): success, failure or cancelled"
     required: false
     default: "success"
+
+outputs:
+  message_id:
+    description: "ID of the created ClickUp chat message (empty in test mode, when skipped, or if not returned)"
+    value: ${{ steps.notify.outputs.message_id }}
+  message:
+    description: "The message content that was sent or previewed (empty when skipped)"
+    value: ${{ steps.notify.outputs.message }}
+  commit_count:
+    description: "Number of commits in the changelog range, before filtering (empty when the changelog is disabled)"
+    value: ${{ steps.commits.outputs.commit_count }}
+  previous_sha:
+    description: "Base commit SHA of the changelog range (empty if none)"
+    value: ${{ steps.commits.outputs.previous_sha }}
+  compare_url:
+    description: "GitHub compare URL for the changelog range (empty if none)"
+    value: ${{ steps.commits.outputs.compare_url }}
 
 runs:
   using: "composite"
   steps:
-    - name: Set Environment Variables
+    - name: 🚦 Resolve Workflow Status
+      id: status
       shell: bash
+      env:
+        WORKFLOW_STATUS: ${{ inputs.workflow_status }}
+        NOTIFY_ON_FAILURE: ${{ inputs.notify_on_failure }}
+        NOTIFY_ON_CANCEL: ${{ inputs.notify_on_cancel }}
       run: |
-        echo "CLICKUP_WORKSPACE_ID=${{ inputs.clickup_workspace_id }}" >> $GITHUB_ENV
-        echo "CLICKUP_PROJECT_NAME=${{ inputs.clickup_project_name }}" >> $GITHUB_ENV
-        echo "GITHUB_TOKEN=${{ github.token }}" >> $GITHUB_ENV
-        echo "REPO_NAME=$(echo "$GITHUB_REPOSITORY" | cut -d '/' -f 2)" >> $GITHUB_ENV
-        echo "TRIGGERING_ACTOR=$GITHUB_ACTOR" >> $GITHUB_ENV
-        echo "STAGING_EMOJI=${{ inputs.staging_emoji }}" >> $GITHUB_ENV
-        echo "PRODUCTION_EMOJI=${{ inputs.production_emoji }}" >> $GITHUB_ENV
+        STATUS=$(printf '%s' "$WORKFLOW_STATUS" | tr '[:upper:]' '[:lower:]')
+        case "$STATUS" in
+          failure|cancelled) ;;
+          *) STATUS="success" ;;
+        esac
+
+        NOTIFY="true"
+        if [ "$STATUS" = "failure" ] && [ "$NOTIFY_ON_FAILURE" != "true" ]; then
+          NOTIFY="false"
+          echo "Workflow failed and notify_on_failure is not enabled - skipping notification."
+        fi
+        if [ "$STATUS" = "cancelled" ] && [ "$NOTIFY_ON_CANCEL" != "true" ]; then
+          NOTIFY="false"
+          echo "Workflow was cancelled and notify_on_cancel is not enabled - skipping notification."
+        fi
+
+        echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+        echo "notify=$NOTIFY" >> "$GITHUB_OUTPUT"
 
     - name: ⏱️ Fetch Duration
       id: duration
-      if: ${{ inputs.show_fetch_duration == 'true' && inputs.workflow_status != 'failure' }}
-      uses: architweb/ClickUpNotification/steps/fetch-duration@v3.2.0
+      if: ${{ steps.status.outputs.notify == 'true' && inputs.show_fetch_duration == 'true' }}
+      uses: architweb/ClickUpNotification/steps/fetch-duration@v3.3.0
 
     - name: 📝 Fetch Commits
       id: commits
-      if: ${{ inputs.show_changelog_commits == 'true' && inputs.workflow_status != 'failure' }}
-      uses: architweb/ClickUpNotification/steps/fetch-commits@v3.2.0
+      if: ${{ steps.status.outputs.notify == 'true' && steps.status.outputs.status == 'success' && inputs.show_changelog_commits == 'true' }}
+      uses: architweb/ClickUpNotification/steps/fetch-commits@v3.3.0
       with:
         full_commit_message: ${{ inputs.full_commit_message }}
         show_commit_statistics: ${{ inputs.show_commit_statistics }}
         filter_agent_commits: ${{ inputs.filter_agent_commits }}
         group_commits_by_type: ${{ inputs.group_commits_by_type }}
         show_pr_links: ${{ inputs.show_pr_links }}
+        clickup_workspace_id: ${{ inputs.clickup_workspace_id }}
+        since_ref: ${{ inputs.since_ref }}
+        max_commits: ${{ inputs.max_commits }}
+        show_compare_link: ${{ inputs.show_compare_link }}
 
     - name: 📢 Send ClickUp Notification
-      if: ${{ inputs.workflow_status != 'failure' }}
-      uses: architweb/ClickUpNotification/steps/send-notification@v3.2.0
+      id: notify
+      if: ${{ steps.status.outputs.notify == 'true' }}
+      uses: architweb/ClickUpNotification/steps/send-notification@v3.3.0
       with:
         clickup_api_token: ${{ inputs.clickup_api_token }}
         clickup_workspace_id: ${{ inputs.clickup_workspace_id }}
@@ -116,59 +174,9 @@ runs:
         title: ${{ inputs.title }}
         description: ${{ inputs.description }}
         test_mode: ${{ inputs.test_mode }}
-        formatted_duration: ${{ inputs.show_fetch_duration == 'true' && steps.duration.outputs.formatted_duration || 'unknown' }}
-        commit_file: ${{ inputs.show_changelog_commits == 'true' && steps.commits.outputs.commit_file || '' }}
-
-    - name: ❌ Send Failure Notification
-      if: ${{ inputs.notify_on_failure == 'true' && inputs.workflow_status == 'failure' }}
-      shell: bash
-      run: |
-        # Get user display name
-        TRIGGERING_USER_NAME=""
-        if [ -n "$GITHUB_TOKEN" ] && [ -n "$TRIGGERING_ACTOR" ]; then
-          TRIGGERING_USER_NAME=$(curl -sf -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-            -H "Accept: application/vnd.github.v3+json" \
-            "https://api.github.com/users/${TRIGGERING_ACTOR}" 2>/dev/null | jq -r '.name // ""' 2>/dev/null || echo "")
-        fi
-        if [ -z "$TRIGGERING_USER_NAME" ] || [ "$TRIGGERING_USER_NAME" = "null" ]; then
-          TRIGGERING_USER_NAME="${TRIGGERING_ACTOR:-Unknown User}"
-        fi
-        TRIGGERING_USER_NAME=$(printf '%s' "$TRIGGERING_USER_NAME" | tr -c '[:alnum:] ' ' ' | tr -s ' ')
-
-        # Determine emoji
-        EMOJI="$PRODUCTION_EMOJI"
-        if echo "${GITHUB_REF_NAME}" | grep -qi "staging"; then
-          EMOJI="$STAGING_EMOJI"
-        fi
-
-        # Build failure message
-        WORKFLOW_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-
-        MESSAGE_FILE=$(mktemp)
-        printf "%s %s **%s** deployment to **%s** failed!\n\n_Triggered by: %s_\n\n⚠️ The workflow has failed. Check the logs for details.\n🔗 [View Workflow Run](%s)" \
-          "❌" "$EMOJI" "$CLICKUP_PROJECT_NAME" "$GITHUB_REF_NAME" "$TRIGGERING_USER_NAME" "$WORKFLOW_URL" > "$MESSAGE_FILE"
-
-        # Send to ClickUp
-        PAYLOAD_FILE=$(mktemp)
-        jq -n --arg content "$(cat "$MESSAGE_FILE")" '{
-          type: "message",
-          content_format: "text/md",
-          content: $content
-        }' > "$PAYLOAD_FILE"
-
-        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
-          -X POST \
-          -H "Content-Type: application/json" \
-          -H "Authorization: ${{ inputs.clickup_api_token }}" \
-          -d @"$PAYLOAD_FILE" \
-          "https://api.clickup.com/api/v3/workspaces/${{ inputs.clickup_workspace_id }}/chat/channels/${{ inputs.clickup_channel_id }}/messages")
-
-        # Cleanup
-        rm -f "$PAYLOAD_FILE" "$MESSAGE_FILE"
-
-        if [[ "$HTTP_CODE" -ge 200 && "$HTTP_CODE" -lt 300 ]]; then
-          echo "--- ClickUp failure notification sent successfully ---"
-        else
-          echo "::error::Failed to send failure notification. HTTP code: $HTTP_CODE"
-          exit 1
-        fi
+        workflow_status: ${{ steps.status.outputs.status }}
+        staging_emoji: ${{ inputs.staging_emoji }}
+        production_emoji: ${{ inputs.production_emoji }}
+        environment_emojis: ${{ inputs.environment_emojis }}
+        formatted_duration: ${{ steps.duration.outputs.formatted_duration || 'unknown' }}
+        commit_file: ${{ steps.commits.outputs.commit_file }}

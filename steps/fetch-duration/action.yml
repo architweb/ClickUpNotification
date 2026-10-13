@@ -12,26 +12,23 @@ runs:
     - name: Calculate Duration
       id: duration
       shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
       run: |
-        STARTED_AT=""
         FORMATTED_DURATION="unknown"
 
         if command -v gh &> /dev/null; then
-          STARTED_AT=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" --jq '.run_started_at' 2>/dev/null || echo "")
+          # jq parses the ISO 8601 timestamp, so this works with both GNU and BSD date
+          START_EPOCH=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --jq '.run_started_at | fromdateiso8601' 2>/dev/null || echo "")
 
-          if [ -n "$STARTED_AT" ]; then
-            COMPLETED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-
-            if command -v date &> /dev/null; then
-              START_EPOCH=$(date -d "$STARTED_AT" +%s 2>/dev/null || echo "")
-              END_EPOCH=$(date -d "$COMPLETED_AT" +%s 2>/dev/null || echo "")
-
-              if [ -n "$START_EPOCH" ] && [ -n "$END_EPOCH" ]; then
-                DURATION=$((END_EPOCH - START_EPOCH))
-                FORMATTED_DURATION=$(printf "%02d:%02d" $((DURATION / 60)) $((DURATION % 60)))
-              fi
+          if [ -n "$START_EPOCH" ]; then
+            END_EPOCH=$(date -u +%s)
+            DURATION=$((END_EPOCH - START_EPOCH))
+            if [ "$DURATION" -ge 0 ]; then
+              FORMATTED_DURATION=$(printf "%02d:%02d" $((DURATION / 60)) $((DURATION % 60)))
             fi
           fi
         fi
 
-        echo "FORMATTED_DURATION=${FORMATTED_DURATION}" >> $GITHUB_OUTPUT
+        echo "FORMATTED_DURATION=${FORMATTED_DURATION}" >> "$GITHUB_OUTPUT"

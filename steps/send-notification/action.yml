@@ -34,6 +34,30 @@ inputs:
     description: "Test mode - preview message without sending to ClickUp"
     required: false
     default: "false"
+  workflow_status:
+    description: "Normalized workflow status: success, failure or cancelled"
+    required: false
+    default: "success"
+  staging_emoji:
+    description: "Emoji used for staging branch notifications"
+    required: false
+    default: "🧪"
+  production_emoji:
+    description: "Emoji used for production branch notifications"
+    required: false
+    default: "🚀"
+  environment_emojis:
+    description: "Optional '<branch glob>=<emoji>' lines; first match wins over staging/production emojis"
+    required: false
+    default: ""
+
+outputs:
+  message:
+    description: "The message content that was sent (or previewed in test mode)"
+    value: ${{ steps.message.outputs.message }}
+  message_id:
+    description: "ID of the created ClickUp chat message (empty in test mode or if not returned)"
+    value: ${{ steps.send.outputs.message_id }}
 
 runs:
   using: "composite"
@@ -41,6 +65,11 @@ runs:
     - name: 👤📝 Get User Info & Resolve Names (Parallel)
       id: parallel-info
       shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        CLICKUP_API_TOKEN: ${{ inputs.clickup_api_token }}
+        WORKSPACE_ID: ${{ inputs.clickup_workspace_id }}
+        TEST_MODE: ${{ inputs.test_mode }}
       run: |
         USER_INFO=$(mktemp)
         NAMES_FILE=$(mktemp)
@@ -53,13 +82,10 @@ runs:
         USER_PID=$!
 
         # Start name resolution in background (only if test mode)
-        if [[ "${{ inputs.test_mode }}" == "true" ]]; then
+        if [[ "$TEST_MODE" == "true" ]]; then
           (
             chmod +x "$GITHUB_ACTION_PATH/scripts/resolve-names.sh"
-            "$GITHUB_ACTION_PATH/scripts/resolve-names.sh" \
-              "${{ inputs.clickup_api_token }}" \
-              "${{ inputs.clickup_workspace_id }}" \
-              "$NAMES_FILE"
+            "$GITHUB_ACTION_PATH/scripts/resolve-names.sh" "$WORKSPACE_ID" "$NAMES_FILE"
           ) &
           NAMES_PID=$!
         fi
@@ -68,55 +94,83 @@ runs:
         wait $USER_PID
 
         # Wait for names resolution if running
-        if [[ "${{ inputs.test_mode }}" == "true" ]]; then
+        if [[ "$TEST_MODE" == "true" ]]; then
           wait $NAMES_PID
         fi
 
-        echo "USER_INFO=$USER_INFO" >> $GITHUB_OUTPUT
-        echo "NAMES_FILE=$NAMES_FILE" >> $GITHUB_OUTPUT
+        echo "USER_INFO=$USER_INFO" >> "$GITHUB_OUTPUT"
+        echo "NAMES_FILE=$NAMES_FILE" >> "$GITHUB_OUTPUT"
 
     - name: Build Message
       id: message
       shell: bash
+      env:
+        USER_INFO: ${{ steps.parallel-info.outputs.USER_INFO }}
+        TITLE: ${{ inputs.title }}
+        DESCRIPTION: ${{ inputs.description }}
+        FORMATTED_DURATION: ${{ inputs.formatted_duration }}
+        COMMIT_FILE: ${{ inputs.commit_file }}
+        WORKFLOW_STATUS: ${{ inputs.workflow_status }}
+        CLICKUP_PROJECT_NAME: ${{ inputs.clickup_project_name }}
+        STAGING_EMOJI: ${{ inputs.staging_emoji }}
+        PRODUCTION_EMOJI: ${{ inputs.production_emoji }}
+        ENVIRONMENT_EMOJIS: ${{ inputs.environment_emojis }}
       run: |
         MESSAGE_FILE=$(mktemp)
         chmod +x "$GITHUB_ACTION_PATH/scripts/build-message.sh"
         "$GITHUB_ACTION_PATH/scripts/build-message.sh" \
-          "${{ steps.parallel-info.outputs.USER_INFO }}" \
-          "${{ inputs.title }}" \
-          "${{ inputs.description }}" \
-          "${{ inputs.formatted_duration }}" \
-          "${{ inputs.commit_file }}" \
-          "$MESSAGE_FILE"
-        echo "MESSAGE_FILE=$MESSAGE_FILE" >> $GITHUB_OUTPUT
+          "$USER_INFO" \
+          "$TITLE" \
+          "$DESCRIPTION" \
+          "$FORMATTED_DURATION" \
+          "$COMMIT_FILE" \
+          "$MESSAGE_FILE" \
+          "$WORKFLOW_STATUS"
+        echo "MESSAGE_FILE=$MESSAGE_FILE" >> "$GITHUB_OUTPUT"
 
-    - name: Resolve Names
-      id: names
-      if: ${{ inputs.test_mode == 'true' }}
-      shell: bash
-      run: |
-        # Names already resolved in parallel step
-        echo "NAMES_FILE=${{ steps.parallel-info.outputs.NAMES_FILE }}" >> $GITHUB_OUTPUT
+        DELIMITER="CLICKUP_MESSAGE_$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
+        {
+          echo "message<<$DELIMITER"
+          cat "$MESSAGE_FILE"
+          echo "$DELIMITER"
+        } >> "$GITHUB_OUTPUT"
 
     - name: Preview Message
       if: ${{ inputs.test_mode == 'true' }}
       shell: bash
+      env:
+        MESSAGE_FILE: ${{ steps.message.outputs.MESSAGE_FILE }}
+        NAMES_FILE: ${{ steps.parallel-info.outputs.NAMES_FILE }}
+        USER_INFO: ${{ steps.parallel-info.outputs.USER_INFO }}
+        WORKSPACE_ID: ${{ inputs.clickup_workspace_id }}
+        COMMIT_FILE: ${{ inputs.commit_file }}
       run: |
         chmod +x "$GITHUB_ACTION_PATH/scripts/preview-message.sh"
         "$GITHUB_ACTION_PATH/scripts/preview-message.sh" \
-          "${{ steps.message.outputs.MESSAGE_FILE }}" \
-          "${{ steps.names.outputs.NAMES_FILE }}" \
-          "${{ inputs.clickup_workspace_id }}" \
-        rm -f "${{ steps.message.outputs.MESSAGE_FILE }}" "${{ steps.names.outputs.NAMES_FILE }}" "${{ inputs.commit_file }}"
+          "$MESSAGE_FILE" \
+          "$NAMES_FILE" \
+          "$WORKSPACE_ID"
+        rm -f "$MESSAGE_FILE" "$NAMES_FILE" "$USER_INFO" "$COMMIT_FILE"
 
     - name: Send to ClickUp
+      id: send
       if: ${{ inputs.test_mode != 'true' }}
       shell: bash
+      env:
+        CLICKUP_API_TOKEN: ${{ inputs.clickup_api_token }}
+        MESSAGE_FILE: ${{ steps.message.outputs.MESSAGE_FILE }}
+        NAMES_FILE: ${{ steps.parallel-info.outputs.NAMES_FILE }}
+        USER_INFO: ${{ steps.parallel-info.outputs.USER_INFO }}
+        WORKSPACE_ID: ${{ inputs.clickup_workspace_id }}
+        CHANNEL_ID: ${{ inputs.clickup_channel_id }}
+        COMMIT_FILE: ${{ inputs.commit_file }}
       run: |
+        MESSAGE_ID_FILE=$(mktemp)
+        trap 'rm -f "$MESSAGE_FILE" "$NAMES_FILE" "$USER_INFO" "$COMMIT_FILE" "$MESSAGE_ID_FILE"' EXIT
         chmod +x "$GITHUB_ACTION_PATH/scripts/send-to-clickup.sh"
         "$GITHUB_ACTION_PATH/scripts/send-to-clickup.sh" \
-          "${{ steps.message.outputs.MESSAGE_FILE }}" \
-          "${{ inputs.clickup_api_token }}" \
-          "${{ inputs.clickup_workspace_id }}" \
-          "${{ inputs.clickup_channel_id }}"
-        rm -f "${{ steps.message.outputs.MESSAGE_FILE }}" "${{ inputs.commit_file }}"
+          "$MESSAGE_FILE" \
+          "$WORKSPACE_ID" \
+          "$CHANNEL_ID" \
+          "$MESSAGE_ID_FILE"
+        echo "message_id=$(cat "$MESSAGE_ID_FILE")" >> "$GITHUB_OUTPUT"

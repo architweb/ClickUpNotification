@@ -29,8 +29,8 @@ jobs:
             exit 1
           fi
           NAME=$(basename "$GITHUB_REPOSITORY")
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "name=$NAME" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
           echo "Found version: $VERSION"
 
       - name: 📄 Extract latest changelog
@@ -51,26 +51,26 @@ jobs:
               sed -n "${START_LINE},${END_LINE}p" CHANGELOG > changelog_section.md
             fi
           fi
-          echo "changelog_file=changelog_section.md" >> $GITHUB_OUTPUT
+          echo "changelog_file=changelog_section.md" >> "$GITHUB_OUTPUT"
 
       - name: 🔃 Check if tag/release exists
         id: check-tag
         run: |
           VERSION="${{ steps.package-info.outputs.version }}"
           if git rev-parse "$VERSION" >/dev/null 2>&1; then
-            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "exists=true" >> "$GITHUB_OUTPUT"
             PRERELEASE=$(gh release view "$VERSION" --json isPrerelease --jq '.isPrerelease' 2>/dev/null || echo "false")
-            echo "is_prerelease=$PRERELEASE" >> $GITHUB_OUTPUT
+            echo "is_prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
             if [ "$PRERELEASE" = "true" ]; then
-              echo "action=update_to_latest" >> $GITHUB_OUTPUT
+              echo "action=update_to_latest" >> "$GITHUB_OUTPUT"
               echo "Found prerelease $VERSION - will update to latest release"
             else
-              echo "action=abort" >> $GITHUB_OUTPUT
+              echo "action=abort" >> "$GITHUB_OUTPUT"
               echo "Found stable release $VERSION - will abort"
             fi
           else
-            echo "exists=false" >> $GITHUB_OUTPUT
-            echo "action=create_new" >> $GITHUB_OUTPUT
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "action=create_new" >> "$GITHUB_OUTPUT"
             echo "Tag $VERSION does not exist - will create new release"
           fi
         env:

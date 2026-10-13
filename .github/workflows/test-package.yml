@@ -32,7 +32,19 @@ jobs:
           ref: "release/staging"
           fetch-depth: 0
 
+      # action.yml pins its sub-actions to the published tag. Point them at the
+      # checked-out ./steps so this run tests the code on this branch.
+      - name: 🔁 Use Local Sub-Actions
+        run: |
+          sed -i -E 's#architweb/ClickUpNotification/(steps/[a-z-]+)@v[0-9.]+#./\1#' action.yml
+          if grep -q 'architweb/ClickUpNotification/steps/' action.yml; then
+            echo "::error::Some sub-action references were not rewritten"
+            exit 1
+          fi
+          grep -n 'uses: ./steps/' action.yml
+
       - name: 🧪 Test ClickUp Notification
+        id: notify
         uses: ./
         with:
           clickup_api_token: ${{ secrets.CLICKUP_API_TOKEN }}
@@ -45,3 +57,60 @@ jobs:
           show_fetch_duration: "true"
           show_changelog_commits: "true"
           full_commit_message: "true"
+          show_compare_link: "true"
+
+      - name: 📤 Check Outputs
+        env:
+          MESSAGE_ID: ${{ steps.notify.outputs.message_id }}
+          COMMIT_COUNT: ${{ steps.notify.outputs.commit_count }}
+          PREVIOUS_SHA: ${{ steps.notify.outputs.previous_sha }}
+          COMPARE_URL: ${{ steps.notify.outputs.compare_url }}
+          MESSAGE: ${{ steps.notify.outputs.message }}
+        run: |
+          echo "message_id:   $MESSAGE_ID"
+          echo "commit_count: $COMMIT_COUNT"
+          echo "previous_sha: $PREVIOUS_SHA"
+          echo "compare_url:  $COMPARE_URL"
+          echo "message length: ${#MESSAGE}"
+          if [ -z "$MESSAGE" ]; then
+            echo "::error::message output is empty"
+            exit 1
+          fi
+
+      - name: 🔎 Preview - Grouped, Limited, Custom Emojis
+        uses: ./
+        with:
+          clickup_api_token: ${{ secrets.CLICKUP_API_TOKEN }}
+          clickup_workspace_id: ${{ secrets.CLICKUP_WORKSPACE_ID }}
+          clickup_channel_id: ${{ secrets.CLICKUP_CHANNEL_ID }}
+          clickup_project_name: "ClickUp Notification Package Test"
+          test_mode: "true"
+          group_commits_by_type: "true"
+          show_pr_links: "true"
+          max_commits: "3"
+          show_compare_link: "true"
+          environment_emojis: |
+            release/staging=🟡
+            release/*=📦
+
+      - name: 🔎 Preview - Failure Message
+        uses: ./
+        with:
+          clickup_api_token: ${{ secrets.CLICKUP_API_TOKEN }}
+          clickup_workspace_id: ${{ secrets.CLICKUP_WORKSPACE_ID }}
+          clickup_channel_id: ${{ secrets.CLICKUP_CHANNEL_ID }}
+          clickup_project_name: "ClickUp Notification Package Test"
+          test_mode: "true"
+          notify_on_failure: "true"
+          workflow_status: "failure"
+
+      - name: 🔎 Preview - Cancelled Message
+        uses: ./
+        with:
+          clickup_api_token: ${{ secrets.CLICKUP_API_TOKEN }}
+          clickup_workspace_id: ${{ secrets.CLICKUP_WORKSPACE_ID }}
+          clickup_channel_id: ${{ secrets.CLICKUP_CHANNEL_ID }}
+          clickup_project_name: "ClickUp Notification Package Test"
+          test_mode: "true"
+          notify_on_cancel: "true"
+          workflow_status: "cancelled"

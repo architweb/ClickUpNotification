@@ -1,0 +1,47 @@
+[
+  {
+    "sha": "a1",
+    "author": "jane doe",
+    "message": "feat(auth): add login task `86ddd0y92`\n\n- first point\n- second point"
+  },
+  {
+    "sha": "a2",
+    "author": "John_Smith!",
+    "message": "FIX: crash on save ctask `TST-747`"
+  },
+  {
+    "sha": "a3",
+    "author": "jane doe",
+    "message": "Merge pull request #5 from x/y\n\nstuff"
+  },
+  {
+    "sha": "a4",
+    "author": "jane doe",
+    "message": "feat(auth): add login task `86ddd0y92`\n\n- first point\n- second point"
+  },
+  {
+    "sha": "a5",
+    "author": "Copilot SWE Agent Bot",
+    "message": "Initial plan"
+  },
+  {
+    "sha": "a6",
+    "author": "copilot-swe-agent[bot]",
+    "message": "docs: update readme\n\nCo-authored-by: Alice Writer <123+alice@users.noreply.github.com>"
+  },
+  {
+    "sha": "a7",
+    "author": "bob",
+    "message": "chore: tidy\n\nCo-authored-by: Carol Pair <carol@example.com>"
+  },
+  {
+    "sha": "a8",
+    "author": "bob",
+    "message": "Improve things, closes #12"
+  },
+  {
+    "sha": "a9",
+    "author": "bob",
+    "message": "refactor!: drop old api\n\nPlain body line\nsecond line"
+  }
+]

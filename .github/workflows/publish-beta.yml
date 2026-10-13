@@ -29,8 +29,8 @@ jobs:
             exit 1
           fi
           NAME=$(basename "$GITHUB_REPOSITORY")
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "name=$NAME" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
           echo "Found version: $VERSION"
 
       - name: 📄 Extract latest changelog
@@ -52,15 +52,15 @@ jobs:
             fi
           fi
 
-          echo "changelog_file=changelog_section.md" >> $GITHUB_OUTPUT
+          echo "changelog_file=changelog_section.md" >> "$GITHUB_OUTPUT"
 
       - name: 🔃 Check if tag exists
         id: check-tag
         run: |
           if git rev-parse "${{ steps.package-info.outputs.version }}" >/dev/null 2>&1; then
-            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "exists=true" >> "$GITHUB_OUTPUT"
           else
-            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: 🆕 Create beta Release

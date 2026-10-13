@@ -22,11 +22,36 @@ inputs:
     description: "Show PR links next to commit references"
     required: false
     default: "false"
+  clickup_workspace_id:
+    description: "ClickUp Workspace ID, used to build links for custom task IDs (ctask)"
+    required: false
+    default: ""
+  since_ref:
+    description: "Tag, branch or SHA to start the changelog from when no previous successful run exists"
+    required: false
+    default: ""
+  max_commits:
+    description: "Maximum number of commits to list (most recent first kept); empty or 0 shows all"
+    required: false
+    default: ""
+  show_compare_link:
+    description: "Add a 'View full diff' link to the GitHub compare page"
+    required: false
+    default: "false"
 
 outputs:
   commit_file:
     description: "Path to the temporary file containing commit changelog"
     value: ${{ steps.build.outputs.COMMIT_FILE }}
+  commit_count:
+    description: "Number of commits in the changelog range (before filtering)"
+    value: ${{ steps.get-data.outputs.commit_count }}
+  previous_sha:
+    description: "Base commit SHA of the changelog range (empty if none)"
+    value: ${{ steps.get-data.outputs.previous_sha }}
+  compare_url:
+    description: "GitHub compare URL for the changelog range (empty if none)"
+    value: ${{ steps.get-data.outputs.compare_url }}
 
 runs:
   using: "composite"
@@ -34,49 +59,80 @@ runs:
     - name: Get Commit Data
       id: get-data
       shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        SINCE_REF: ${{ inputs.since_ref }}
       run: |
         COMMITS_DATA=$(mktemp)
         chmod +x "$GITHUB_ACTION_PATH/scripts/get-commit-data.sh"
-        "$GITHUB_ACTION_PATH/scripts/get-commit-data.sh" "$COMMITS_DATA"
-        echo "COMMITS_DATA=$COMMITS_DATA" >> $GITHUB_OUTPUT
+        "$GITHUB_ACTION_PATH/scripts/get-commit-data.sh" "$COMMITS_DATA" "$SINCE_REF"
+        echo "COMMITS_DATA=$COMMITS_DATA" >> "$GITHUB_OUTPUT"
+        echo "commit_count=$(jq 'length' "$COMMITS_DATA")" >> "$GITHUB_OUTPUT"
+        echo "previous_sha=$(sed -n 's/^PREVIOUS_SHA=//p' "$COMMITS_DATA.meta")" >> "$GITHUB_OUTPUT"
+        echo "compare_url=$(sed -n 's/^COMPARE_URL=//p' "$COMMITS_DATA.meta")" >> "$GITHUB_OUTPUT"
 
     - name: Process Commits
       id: process
       shell: bash
+      env:
+        WORKSPACE_ID_INPUT: ${{ inputs.clickup_workspace_id }}
+        COMMITS_DATA: ${{ steps.get-data.outputs.COMMITS_DATA }}
+        FULL_COMMIT_MESSAGE: ${{ inputs.full_commit_message }}
+        FILTER_AGENT_COMMITS: ${{ inputs.filter_agent_commits }}
+        GROUP_COMMITS_BY_TYPE: ${{ inputs.group_commits_by_type }}
+        SHOW_PR_LINKS: ${{ inputs.show_pr_links }}
+        MAX_COMMITS: ${{ inputs.max_commits }}
+        COMPARE_URL: ${{ steps.get-data.outputs.compare_url }}
       run: |
         COMMITS_OUTPUT=$(mktemp)
+        # Fall back to a job-level CLICKUP_WORKSPACE_ID when the input is not set
+        export CLICKUP_WORKSPACE_ID="${WORKSPACE_ID_INPUT:-${CLICKUP_WORKSPACE_ID:-}}"
         chmod +x "$GITHUB_ACTION_PATH/scripts/process-commits.sh"
         "$GITHUB_ACTION_PATH/scripts/process-commits.sh" \
-          "${{ steps.get-data.outputs.COMMITS_DATA }}" \
-          "${{ inputs.full_commit_message }}" \
+          "$COMMITS_DATA" \
+          "$FULL_COMMIT_MESSAGE" \
           "$COMMITS_OUTPUT" \
-          "${{ inputs.filter_agent_commits }}" \
-          "${{ inputs.group_commits_by_type }}" \
-          "${{ inputs.show_pr_links }}"
-        echo "COMMITS_OUTPUT=$COMMITS_OUTPUT" >> $GITHUB_OUTPUT
+          "$FILTER_AGENT_COMMITS" \
+          "$GROUP_COMMITS_BY_TYPE" \
+          "$SHOW_PR_LINKS" \
+          "$MAX_COMMITS" \
+          "$COMPARE_URL"
+        echo "COMMITS_OUTPUT=$COMMITS_OUTPUT" >> "$GITHUB_OUTPUT"
 
     - name: Generate Statistics
       id: stats
       if: ${{ inputs.show_commit_statistics == 'true' }}
       shell: bash
+      env:
+        COMMITS_DATA: ${{ steps.get-data.outputs.COMMITS_DATA }}
       run: |
         STATS_OUTPUT=$(mktemp)
         chmod +x "$GITHUB_ACTION_PATH/scripts/generate-statistics.sh"
         "$GITHUB_ACTION_PATH/scripts/generate-statistics.sh" \
-          "${{ steps.get-data.outputs.COMMITS_DATA }}" \
-          "${{ steps.get-data.outputs.COMMITS_DATA }}.meta" \
+          "$COMMITS_DATA" \
+          "$COMMITS_DATA.meta" \
           "$STATS_OUTPUT"
-        echo "STATS_OUTPUT=$STATS_OUTPUT" >> $GITHUB_OUTPUT
+        echo "STATS_OUTPUT=$STATS_OUTPUT" >> "$GITHUB_OUTPUT"
 
     - name: Build Final Changelog
       id: build
       shell: bash
+      env:
+        COMMITS_DATA: ${{ steps.get-data.outputs.COMMITS_DATA }}
+        COMMITS_OUTPUT: ${{ steps.process.outputs.COMMITS_OUTPUT }}
+        STATS_OUTPUT: ${{ steps.stats.outputs.STATS_OUTPUT }}
+        SHOW_COMMIT_STATISTICS: ${{ inputs.show_commit_statistics }}
+        SHOW_COMPARE_LINK: ${{ inputs.show_compare_link }}
+        COMPARE_URL: ${{ steps.get-data.outputs.compare_url }}
       run: |
         COMMIT_FILE=$(mktemp)
         chmod +x "$GITHUB_ACTION_PATH/scripts/build-changelog.sh"
         "$GITHUB_ACTION_PATH/scripts/build-changelog.sh" \
-          "${{ steps.process.outputs.COMMITS_OUTPUT }}" \
-          "${{ steps.stats.outputs.STATS_OUTPUT }}" \
-          "${{ inputs.show_commit_statistics }}" \
-          "$COMMIT_FILE"
-        echo "COMMIT_FILE=$COMMIT_FILE" >> $GITHUB_OUTPUT
+          "$COMMITS_OUTPUT" \
+          "$STATS_OUTPUT" \
+          "$SHOW_COMMIT_STATISTICS" \
+          "$COMMIT_FILE" \
+          "$SHOW_COMPARE_LINK" \
+          "$COMPARE_URL"
+        echo "COMMIT_FILE=$COMMIT_FILE" >> "$GITHUB_OUTPUT"
+        rm -f "$COMMITS_DATA" "$COMMITS_DATA.meta" "$COMMITS_OUTPUT" "$STATS_OUTPUT"

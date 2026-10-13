@@ -25,14 +25,15 @@ HTTP_CODE=$(curl -s -o "$RESPONSE_FILE" -w "%{http_code}" \
   -d @"$PAYLOAD_FILE" \
   "https://api.clickup.com/api/v3/workspaces/$WORKSPACE_ID/chat/channels/$CHANNEL_ID/messages")
 
-# Cleanup
-rm -f "$PAYLOAD_FILE" "$RESPONSE_FILE"
-
 # Check result
 if [[ "$HTTP_CODE" -ge 200 && "$HTTP_CODE" -lt 300 ]]; then
   echo "--- ClickUp notification sent successfully ---"
+  rm -f "$PAYLOAD_FILE" "$RESPONSE_FILE"
   exit 0
 else
   echo "::error::Failed to send notification to ClickUp. HTTP code: $HTTP_CODE"
+  echo "ClickUp response: $(cat "$RESPONSE_FILE")"
+  echo "Message length: $(jq -r '.content | length' "$PAYLOAD_FILE") characters"
+  rm -f "$PAYLOAD_FILE" "$RESPONSE_FILE"
   exit 1
 fi

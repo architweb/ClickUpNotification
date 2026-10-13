@@ -7,473 +7,253 @@
 ![GitHub Action](https://img.shields.io/badge/GitHub-Action-informational?style=flat&logo=github-actions&logoColor=white)
 [![License](https://img.shields.io/badge/license-MIT-black.svg)](https://opensource.org/licenses/MIT)
 
-**ClickUpNotification** is a GitHub Action that notifies your team via a ClickUp chat channel, keeping them informed about the progress of the CI/CD pipeline up to the point where this action is triggered.
-It summarizes the latest code changes, grouped by author and formatted as an organized changelog, along with the duration.
+**ClickUpNotification** is a GitHub Action that posts a deployment summary to a ClickUp chat channel. The summary includes who triggered the run, how long it took, and a changelog of every commit since the last successful run, grouped by author or by commit type.
 
 ## Features
 
-It'll Send message to ClickUp chat, including:
-
-- Custom **title**
-- Custom **description**
-- **Project name**
-- **Triggered by**
-- **Duration** (configurable)
-- **Changelog** since last run, grouped by author or by commit type (configurable)
-- **Commits statistics** with deployment metrics (configurable)
-- Automatic ClickUp **task links** from (custom) task IDs in commit messages with **cross-platform compatibility**
-- **Single line** or **full commit** message mode
-- **Emphasizes Conventional** Commit types
-- **Smart name resolution** for workspaces and channels
-- **Merge commit filtering** to keep changelogs clean
-- **Agent commit filtering** to hide bot-generated commits
-- **Capitalized contributor names** with Copilot agent attribution
-- **Environment-specific emojis** (staging 🧪 / production 🚀)
-- **PR link association** for commit references
-- **Failure notifications** with workflow run links
-- **Test mode** for previewing messages without sending
+- Custom **title** and **description**
+- **Project name**, **branch**, and **triggered by**
+- **Duration** of the workflow run
+- **Changelog** since the last successful run, grouped by author or by Conventional Commit type
+- **Commit statistics**: files and lines changed, release type, contributors, time since last deploy
+- **ClickUp task links** from `task`/`ctask` IDs in commit messages
+- **Single-line** or **full** commit message mode
+- Emphasized **Conventional Commit** types
+- Filtering of **merge commits** and **agent/bot commits**, plus **Copilot agent attribution**
+- **Environment emojis** (staging 🧪 / production 🚀)
+- **PR links** for `#123` references
+- **Failure notifications** with a link to the workflow run
+- **Test mode** to preview the message without sending it
 
 ## Screenshots
 
 <img src="assets/screenshot.png" alt="Screenshot" style="width:90%;">
 <img src="assets/screenshot-multiline.png" alt="Screenshot-multiline" style="width:90%;">
 
+## Requirements
+
+- **Runner:** `ubuntu-latest` is recommended. The action uses `bash`, `gh`, `jq`, `curl`, and `git`, which are preinstalled on GitHub-hosted runners. Duration calculation needs GNU `date`; on other runners it shows as `unknown`.
+- **Job permissions:** `contents: read` and `actions: read`. The action uses the job's `github.token` to look up workflow runs, compare commits, and fetch user names.
+- **Checkout:** `actions/checkout` with `fetch-depth: 0` is needed when `show_commit_statistics` is enabled, because statistics are computed from local git history.
+- **ClickUp:** an API token and the workspace and chat channel IDs (see below).
+
 ## Setup on ClickUp
 
-In order to send messages, you need to create a token from a user. However, the message will appear as if sent by that user.
-So, it is recommended to create a guest user in your team with a name like "GitHub Actions" or "CI/CD Messenger", then create a token from that account.
+Messages appear as sent by the user who owns the API token. We recommend creating a guest user such as "GitHub Actions" or "CI/CD Messenger" and generating the token from that account:
 
-To create an **API token** within a guest user account:
+1. Log in to that account at [ClickUp](https://app.clickup.com).
+2. Open **Settings** from the top-right menu, then **Apps**.
+3. Click **Generate** under **API Token**.
 
-- Log in to the desired account at [ClickUp](https://app.clickup.com).
-- Click on **Settings** from the top-right menu.
-- Click on **Apps** from the side menu.
-- Click **Generate** under **API Token**.
-
-You can copy `clickup_workspace_id` and `clickup_channel_id` by going to the desired chat channel and checking the URL of that page.
-It should contain two numbers in a format like this:
+To get the workspace and channel IDs, open the target chat channel and copy them from the URL:
 `https://app.clickup.com/<WORKSPACE_ID>/chat/r/<CHANNEL_ID>`
-Simply copy them from the link.
+
+Store all of these as repository secrets, for example `CLICKUP_API_TOKEN`, `CLICKUP_WORKSPACE_ID`, `CLICKUP_CHANNEL_ID`, and `CLICKUP_PROJECT_NAME`.
 
 ## Inputs
 
-The action requires the following inputs to connect to ClickUp and identify your project, make sure to add them as secrets to your GitHub repository:
+| Input                    | Description                                                    | Required | Default   |
+| ------------------------ | -------------------------------------------------------------- | -------- | --------- |
+| `clickup_api_token`      | ClickUp API token                                              | Yes      |           |
+| `clickup_workspace_id`   | ClickUp workspace (team) ID                                    | Yes      |           |
+| `clickup_channel_id`     | ClickUp chat channel ID                                        | Yes      |           |
+| `clickup_project_name`   | Project name shown in the message                              | Yes      |           |
+| `title`                  | Custom title (switches to the "titled" header format)          | No       | `""`      |
+| `description`            | Custom description, shown in italics under the header          | No       | `""`      |
+| `show_fetch_duration`    | Show workflow duration                                         | No       | `"true"`  |
+| `show_changelog_commits` | Show the changelog                                             | No       | `"true"`  |
+| `full_commit_message`    | Use full commit messages instead of the first line only        | No       | `"true"`  |
+| `show_commit_statistics` | Append the statistics block                                    | No       | `"false"` |
+| `filter_agent_commits`   | Hide agent/bot commits and strip `Co-authored-by:` lines       | No       | `"true"`  |
+| `group_commits_by_type`  | Group by Conventional Commit type instead of by author         | No       | `"false"` |
+| `show_pr_links`          | Turn `#123` into links to the repository's pull requests       | No       | `"false"` |
+| `staging_emoji`          | Emoji used when the branch name contains `staging`             | No       | `🧪`      |
+| `production_emoji`       | Emoji used for every other branch                              | No       | `🚀`      |
+| `notify_on_failure`      | Send a failure message when `workflow_status` is `failure`     | No       | `"false"` |
+| `workflow_status`        | Pass `${{ job.status }}`                                       | No       | `success` |
+| `test_mode`              | Print the message in the job log instead of sending it         | No       | `"false"` |
 
-| Input                    | Description                                               | Type              | Required | Default |
-| ------------------------ | --------------------------------------------------------- | ----------------- | -------- | ------- |
-| `clickup_api_token`      | Your ClickUp API token (Personal or Bot)                  | string            | Yes      | `none`  |
-| `clickup_workspace_id`   | The numerical ID of the ClickUp Workspace (Team)          | string            | Yes      | `none`  |
-| `clickup_channel_id`     | The ID of the ClickUp List or Chat View for notifications | string            | Yes      | `none`  |
-| `clickup_project_name`   | A descriptive name for your project (used in the message) | string            | Yes      | `none`  |
-| `title`                  | Custom title for the notification message                 | string            | No       | `""`    |
-| `description`            | Custom description for the notification message           | string            | No       | `""`    |
-| `show_fetch_duration`    | Show duration information in the notification             | "true" \| "false" | No       | `true`  |
-| `show_changelog_commits` | Show changelog commits in the notification                | "true" \| "false" | No       | `true`  |
-| `full_commit_message`    | Use full commit messages instead of first line only       | "true" \| "false" | No       | `true`  |
-| `show_commit_statistics` | Show commit statistics table in the notification          | "true" \| "false" | No       | `false` |
-| `filter_agent_commits`   | Filter out agent-generated commits from changelog         | "true" \| "false" | No       | `true`  |
-| `group_commits_by_type`  | Group commits by conventional commit type                 | "true" \| "false" | No       | `false` |
-| `show_pr_links`          | Linkify PR/issue references in commit messages            | "true" \| "false" | No       | `false` |
-| `staging_emoji`          | Emoji for staging branch notifications                    | string            | No       | `🧪`   |
-| `production_emoji`       | Emoji for production branch notifications                 | string            | No       | `🚀`   |
-| `notify_on_failure`      | Send notification on workflow failure                     | "true" \| "false" | No       | `false` |
-| `workflow_status`        | Current job status for failure notifications              | string            | No       | `success` |
-| `test_mode`              | Preview mode - show message without sending to ClickUp    | "true" \| "false" | No       | `false` |
+Boolean inputs are strings: `"true"` or `"false"`.
 
-## Task ID Integration
-
-You can link commit messages directly to ClickUp tasks by including a task ID reference in your commit message using the following format:
-
-```md
-task `TASK_ID` Your commit message here
-ctask `CUSTOM_TASK_ID` Your commit message here
-```
-
-For example:
-
-```md
-task `86ddd0y92` Add new login functionality
-ctask `TST-747` Add global log out functionality
-```
-
-The action will automatically convert this into a clickable link in the ClickUp notification:
-
-[\`86ddd0y92\`](https://github.com/architweb/ClickUpNotification) | Add new login functionality
-
-[\`TST-747\`](https://github.com/architweb/ClickUpNotification) | Add global log out functionality
-
-Where the task ID becomes a clickable link to the task in ClickUp. This makes it easy for your team to navigate directly to the relevant tasks from deployment notifications.
-
-## 🚀 Advanced Features
-
-### 📊 Commit Statistics
-
-Enable detailed deployment metrics with `show_commit_statistics: "true"`:
+## Usage
 
 ```yaml
-- uses: architweb/ClickUpNotification@v3.2.0
-  with:
-    # ... other inputs ...
-    show_commit_statistics: "true"
-```
-
-**Statistics Include:**
-
-- 📝 **Total Commits**: Number of commits in deployment
-- 📁 **Files Changed**: Modified files count
-- ➕ **Lines Added**: Lines of code added
-- ➖ **Lines Removed**: Lines of code removed
-- ⏰ **Last Deploy**: Time since previous deployment
-- 👥 **Contributors**: Number of unique commit authors
-
-### 🧪 Test Mode
-
-Preview notifications without sending to ClickUp:
-
-```yaml
-- uses: architweb/ClickUpNotification@v3.2.0
-  with:
-    # ... other inputs ...
-    test_mode: "true"
-```
-
-**Test Mode Features:**
-
-- 🔍 **Message Preview**: See exact content before sending
-- 🏷️ **Name Resolution**: Shows workspace and channel names (not just IDs)
-- 📝 **Metadata**: Character count, format, destination details
-- 🔒 **Security**: API token hidden in preview
-
-### 🔤 Enhanced Commit Processing
-
-Fine-tune how commits are displayed:
-
-```yaml
-- uses: architweb/ClickUpNotification@v3.2.0
-  with:
-    # ... other inputs ...
-    full_commit_message: "true" # Use full commit messages
-```
-
-**Features:**
-
-- **🚫 Merge Filtering**: Automatically excludes merge commits
-- **🤖 Agent Filtering**: Filters out bot-generated commits (configurable)
-- **📝 Full Messages**: Option for complete commit messages vs first line only
-- **👥 Author Grouping**: Commits organized by contributor
-- **📂 Type Grouping**: Optionally group by conventional commit type
-- **🔗 PR Links**: Auto-link PR references to GitHub
-
-### 🤖 Agent Commit Filtering
-
-Automatically clean up bot-generated commits from changelogs:
-
-```yaml
-- uses: architweb/ClickUpNotification@v3.2.0
-  with:
-    # ... other inputs ...
-    filter_agent_commits: "true" # Enabled by default
-```
-
-**Filtered Patterns:**
-
-- Commits with message "Initial plan"
-- Commits starting with "Agent-Logs-Url:"
-- Commits starting with "Co-authored-by:"
-- Co-authored-by trailer lines in commit bodies
-
-**Copilot Agent Attribution:**
-
-When the commit author is "copilot swe agent bot", the action extracts the co-authored contributor name and displays it as the primary author:
-
-- `copilot swe agent bot` → `Contributor Name (Copilot Agent)`
-
-### 🎨 Environment-Specific Emojis
-
-Customize notification emojis per environment:
-
-```yaml
-- uses: architweb/ClickUpNotification@v3.2.0
-  with:
-    # ... other inputs ...
-    staging_emoji: "🧪"    # Default for staging branches
-    production_emoji: "🚀"  # Default for production branches
-```
-
-The emoji is auto-selected based on whether the branch name contains "staging".
-
-### 📂 Group Commits by Type
-
-Group changelog entries by conventional commit type instead of by author:
-
-```yaml
-- uses: architweb/ClickUpNotification@v3.2.0
-  with:
-    # ... other inputs ...
-    group_commits_by_type: "true"
-```
-
-**Type Categories:**
-
-- 🎯 **Features** | 🔧 **Fixes** | 🔄 **Refactors** | 📝 **Documentation**
-- 🎨 **Styles** | 🧪 **Tests** | 🏗️ **Build** | 🧹 **Chores**
-- ⏪ **Reverts** | 🔒 **Security** | 📦 **Dependencies** | 🔌 **API**
-- 📋 **Other** (non-conventional commits)
-
-### 🔗 PR Link Association
-
-Auto-link PR/issue references in commit messages:
-
-```yaml
-- uses: architweb/ClickUpNotification@v3.2.0
-  with:
-    # ... other inputs ...
-    show_pr_links: "true"
-```
-
-Converts `#123` references to clickable GitHub links.
-
-### ❌ Failure Notifications
-
-Get notified when deployments fail:
-
-```yaml
-- name: Send ClickUp Notification
-  uses: architweb/ClickUpNotification@v3.2.0
-  if: always() # Required to run on failure
-  with:
-    # ... other inputs ...
-    notify_on_failure: "true"
-    workflow_status: ${{ job.status }}
-```
-
-**Failure notifications include:**
-
-- ❌ Failure indicator with project name and branch
-- 👤 Triggering user
-- 🔗 Direct link to the workflow run for debugging
-
-## Architecture
-
-### Benefits
-
-- **Configurable Components**: Enable/disable duration tracking or changelog independently
-- **Better Testing**: Each step can be tested in isolation
-- **Reusability**: Individual steps can be used in other workflows
-- **Maintainability**: Cleaner code organization and easier debugging
-
-### Message Format
-
-The notification message structure adapts based on your configuration:
-
-**With Custom Title:**
-
-```
-🚀 **branch-name** | **Project Name** | Custom Title
-
-_Triggered by: Username, Done in: 02:15min_
-
-_Custom description text_
-
-**Change Log:**
-[commit details if enabled]
-```
-
-**Default Format:**
-
-```md
-🚀 **Project Name** deployed to **branch-name**
-
-_Triggered by: Username, Done in: 02:15min_
-
-**Change Log:**
-[commit details if enabled]
-```
-
-## Example Usage
-
-Here's how you can integrate `ClickUpNotification` into your deployment workflow. This example triggers on pushes to `release/staging` or manual dispatch with full commit message mode enabled.
-
-```yaml
-name: Staging Deployment Notification
+name: Staging Deployment
 
 on:
   push:
-    branches:
-      - "release/staging"
-  workflow_dispatch: # Allows manual triggering
+    branches: ["release/staging"]
+  workflow_dispatch:
 
 jobs:
-  build-and-deploy:
+  deploy:
     runs-on: ubuntu-latest
-    # Grant permissions needed for checkout and fetching commit history
     permissions:
-      contents: read # To checkout the code and read commit history
-      actions: read # To find the last successful workflow run for changelog generation
+      contents: read
+      actions: read
 
     steps:
-      # Step 1: Check out the repository code
-      - name: Checkout Code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          ref: "release/staging" # Ensure we are on the correct branch
-          fetch-depth: 0 # Fetch all history to enable accurate changelog comparison
+          fetch-depth: 0
 
-      # Step 2: Add your build, test, and deployment steps here...
-      # Example:
-      # - name: Build Project
-      #   run: npm run build
-      # - name: Deploy to Staging
-      #   run: ./deploy_staging.sh
+      # ... your build, test and deploy steps ...
 
-      # Last step: Send ClickUp notification upon successful deployment
       - name: Send ClickUp Notification
-        uses: architweb/ClickUpNotification@v3.2.0 # Use the latest version of the action
-        if: always() # Required for failure notifications
+        uses: architweb/ClickUpNotification@v3.2.0
+        if: always() # needed for failure notifications
         with:
-          # Pass the required secrets to the action
           clickup_api_token: ${{ secrets.CLICKUP_API_TOKEN }}
           clickup_workspace_id: ${{ secrets.CLICKUP_WORKSPACE_ID }}
           clickup_channel_id: ${{ secrets.CLICKUP_CHANNEL_ID }}
           clickup_project_name: ${{ secrets.CLICKUP_PROJECT_NAME }}
-          # Optional parameters
-          full_commit_message: "true" # Set to 'false' to use only first line of commit messages
-          show_commit_statistics: "false" # Set to 'true' to show deployment metrics
-          show_fetch_duration: "true" # Set to 'false' to hide duration information
-          show_changelog_commits: "true" # Set to 'false' to hide changelog
-          filter_agent_commits: "true" # Set to 'false' to show agent commits
-          group_commits_by_type: "false" # Set to 'true' to group by commit type
-          show_pr_links: "false" # Set to 'true' to linkify PR references
-          notify_on_failure: "true" # Set to 'true' to get failure notifications
-          workflow_status: ${{ job.status }} # Pass job status for failure detection
-          test_mode: "false" # Set to 'true' to preview without sending
-          title: "🎉 Staging Deployment Complete" # Custom title (optional)
-          description: "New features deployed to staging environment" # Custom description (optional)
+          title: "🎉 Staging Deployment Complete" # optional
+          description: "New features deployed to staging" # optional
+          show_commit_statistics: "true"
+          notify_on_failure: "true"
+          workflow_status: ${{ job.status }}
 ```
 
-## Advanced Usage Examples
-
-### 📊 Production Deployment with Full Statistics
-
-Perfect for production deployments where you want comprehensive metrics:
+### Minimal (no duration or changelog)
 
 ```yaml
-- name: Production Deployment Notification
-  uses: architweb/ClickUpNotification@v3.2.0
-  with:
-    clickup_api_token: ${{ secrets.CLICKUP_API_TOKEN }}
-    clickup_workspace_id: ${{ secrets.CLICKUP_WORKSPACE_ID }}
-    clickup_channel_id: ${{ secrets.CLICKUP_CHANNEL_ID }}
-    clickup_project_name: ${{ secrets.CLICKUP_PROJECT_NAME }}
-    title: "🚀 Production Release"
-    description: "Production deployment with full metrics and changelog"
-    show_commit_statistics: "true"
-    group_commits_by_type: "true"
-    show_pr_links: "true"
-    full_commit_message: "true"
-```
-
-### 🧪 Testing and Development
-
-Preview notifications during development:
-
-```yaml
-- name: Test Notification Format
-  uses: architweb/ClickUpNotification@v3.2.0
-  with:
-    clickup_api_token: ${{ secrets.CLICKUP_API_TOKEN }}
-    clickup_workspace_id: ${{ secrets.CLICKUP_WORKSPACE_ID }}
-    clickup_channel_id: ${{ secrets.CLICKUP_CHANNEL_ID }}
-    clickup_project_name: "MyApp"
-    test_mode: "true" # Preview only - no actual sending
-    show_commit_statistics: "true"
-    title: "Testing notification format"
-```
-
-### Minimal Notification (No Duration/Changelog)
-
-Perfect for quick status updates:
-
-```yaml
-- name: Quick Status Update
-  uses: architweb/ClickUpNotification@v3.2.0
+- uses: architweb/ClickUpNotification@v3.2.0
   with:
     clickup_api_token: ${{ secrets.CLICKUP_API_TOKEN }}
     clickup_workspace_id: ${{ secrets.CLICKUP_WORKSPACE_ID }}
     clickup_channel_id: ${{ secrets.CLICKUP_CHANNEL_ID }}
     clickup_project_name: ${{ secrets.CLICKUP_PROJECT_NAME }}
     title: "⚡ Hotfix Applied"
-    description: "Critical security patch deployed"
     show_fetch_duration: "false"
     show_changelog_commits: "false"
 ```
 
-### Production Release with Full Details
-
-Comprehensive notification for important deployments:
+### Production release with full details
 
 ```yaml
-- name: Production Release Notification
-  uses: architweb/ClickUpNotification@v3.2.0
+- uses: architweb/ClickUpNotification@v3.2.0
   with:
-    clickup_api_token: ${{ secrets.CLICKUP_API_TOKEN }}
-    clickup_workspace_id: ${{ secrets.CLICKUP_WORKSPACE_ID }}
-    clickup_channel_id: ${{ secrets.CLICKUP_CHANNEL_ID }}
-    clickup_project_name: ${{ secrets.CLICKUP_PROJECT_NAME }}
+    # ... required inputs ...
+    title: "🚀 Production Release"
+    show_commit_statistics: "true"
+    group_commits_by_type: "true"
+    show_pr_links: "true"
 ```
+
+## How It Works
+
+### Changelog range
+
+The changelog covers the commits between the head SHA of the **last successful run of the same workflow on the same branch** and the current commit. The first run on a branch therefore has no changelog. Merge commits (`Merge branch …`, `Merge pull request …`) and duplicate messages are skipped.
+
+### Message format
+
+```md
+🚀 **Project Name** deployed to **branch-name**
+_Optional description_
+
+_Triggered by: Username, Done in: 02:15min_
+
+**Change Log:**
+_*Author Name:*_
+* **Feat:** commit message
+```
+
+When `title` is set, the first line becomes `🚀 **branch-name** | **Project Name** | Title`. The `Done in` part is omitted when the duration is unknown or disabled.
+
+### ClickUp task links
+
+Reference ClickUp tasks in commit messages:
+
+```md
+task `86ddd0y92` Add new login functionality
+ctask `TST-747` Add global log out functionality
+```
+
+These become `[86ddd0y92](https://app.clickup.com/t/86ddd0y92)` and `[TST-747](https://app.clickup.com/t/<WORKSPACE_ID>/TST-747)`. `ctask` is for custom task IDs.
+
+### Conventional Commits
+
+The types `build`, `chore`, `docs`, `feat`, `fix`, `refactor`, `revert`, `style`, `test`, `release`, `security`, `deps`, and `api` are recognized in any letter case and shown in bold, for example `**Feat(auth):**`. With `group_commits_by_type: "true"`, commits are listed under headings such as 🎯 Features, 🔧 Fixes, and 🔄 Refactors, and any other commits appear under 📋 Other.
+
+### Commit statistics
+
+With `show_commit_statistics: "true"`, a **📊 Stats** block is appended. A line is shown only when it is meaningful:
+
+| Line | Shown when |
+| --- | --- |
+| 📝 Count | Always |
+| 🎯 Release Type (Major / Minor / Patch) | A breaking change (`!:`), `feat`, or `fix` commit is present |
+| 📁 Changed, ➕ Added, ➖ Removed | The value is non-zero |
+| 🔧 Fixes, 🔄 Refactor | At least one such commit |
+| ⏰ Last Deploy | At least 30 minutes since the previous run's commit |
+| 👥 Contributor(s) | 2 or more authors |
+| 🏆 Top Contributor | 3 or more authors |
+
+### Agent commit filtering
+
+With `filter_agent_commits: "true"` (the default), commits whose first line is `Initial plan`, or starts with `Agent-Logs-Url:` or `Co-authored-by:`, are hidden, and `Co-authored-by:` trailers are removed from message bodies. Commits authored by the Copilot SWE agent bot are attributed as `Contributor Name (Copilot Agent)`, using the co-author name when one is found.
+
+### Failure notifications
+
+When `notify_on_failure: "true"` and `workflow_status` is `failure`, the normal message is skipped. A short failure message is sent instead, containing the project, branch, triggering user, and a link to the workflow run. Add `if: always()` to the step so it runs after a failed step.
+
+### Test mode
+
+`test_mode: "true"` prints the full message, the resolved workspace name, and the character count to the job log. It does not send anything, and the API token is never printed.
+
+## Troubleshooting
+
+| Symptom | Cause / fix |
+| --- | --- |
+| No "Change Log" section | First run on this branch, no previous successful run of this workflow, or every commit was filtered out. Check that `actions: read` permission is granted. |
+| Stats show no file or line counts | History is missing. Use `actions/checkout` with `fetch-depth: 0`. |
+| No `Done in` duration | `show_fetch_duration` is `"false"`, `gh` is unavailable, or the runner lacks GNU `date` (for example macOS). |
+| Failure message never arrives | You need all three: `if: always()`, `notify_on_failure: "true"`, and `workflow_status: ${{ job.status }}`. |
+| `Failed to send notification to ClickUp. HTTP code: …` | Check the token and IDs. The ClickUp response body is printed in the log below the error. |
+
+## Development
+
+The action is a **composite action** written in Bash, and has no build step or dependencies.
+
+```
+action.yml                 # public inputs and step wiring
+steps/fetch-duration/      # run duration
+steps/fetch-commits/       # commit fetch, formatting, statistics (scripts/*.sh)
+steps/send-notification/   # message build, preview, send (scripts/*.sh)
+.github/workflows/         # test (staging), prerelease (beta), release (production)
+CHANGELOG                  # release notes; first "## [vX.Y.Z]" heading is the version
+```
+
+**Checks:**
+
+```bash
+for f in steps/*/scripts/*.sh; do bash -n "$f" && echo "OK $f"; done
+```
+
+**Testing:** pushing to `release/staging` runs [test-package.yml](.github/workflows/test-package.yml), which runs the action from the working tree. You can also run any workflow with `test_mode: "true"`. Note that the root `action.yml` loads its sub-steps from the pinned release tag, so changes under `steps/` take effect only after release.
+
+**Releasing:**
+
+1. Add a `## [vX.Y.Z] - YYYY-MM-DD` entry at the top of [CHANGELOG](CHANGELOG).
+2. Update the three `steps/...@vX.Y.Z` refs in [action.yml](action.yml), and the examples in this README.
+3. Merge to `release/beta` to create a prerelease, then to `release/production` to create a stable release (or promote the prerelease).
+
+AI agents and maintainers: see [AGENTS.md](AGENTS.md) for architecture, conventions, and change rules.
 
 ## Contributing
 
-We welcome contributions! Here's how you can help improve ClickUpNotification:
-
-### Development Setup
-
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature/your-feature-name`
-3. Make your changes to the relevant step in `./steps/` or the main `action.yml`
-4. Test your changes locally with a test workflow
-5. Submit a pull request with a clear description of your changes
-
-### Contribution Guidelines
-
-- **Code Style**: Follow existing code patterns and formatting
-- **Testing**: Test your changes thoroughly before submitting
-- **Documentation**: Update README.md if you add new features or change behavior
-- **Commit Messages**: Use clear, descriptive commit messages
-- **Pull Requests**: Include a detailed description of what your PR does and why
+1. Fork the repository and branch from `release/staging`.
+2. Make your change in `action.yml` or `steps/`, following the existing script patterns.
+3. Use [Conventional Commits](https://www.conventionalcommits.org/) messages.
+4. Update this README and the CHANGELOG when inputs or behaviour change.
+5. Open a pull request against `release/staging` with a clear description.
 
 ## Support
 
-If you encounter any issues or have questions, here are the ways to get help:
-
-### 📚 Documentation & Issues
-
-- **[GitHub Issues](https://github.com/architweb/ClickUpNotification/issues)** - Report bugs or request features
-- **[Changelog](https://github.com/architweb/ClickUpNotification/blob/release/production/CHANGELOG.md)** - View release notes and changes
-
-### 💬 Community & Contact
-
-- **GitHub**: [@architweb](https://github.com/architweb)
-
-### 🐛 Bug Reports
-
-When reporting bugs, please include:
-
-- GitHub Action version used
-- Complete error message/logs
-- Steps to reproduce
-- Expected vs actual behavior
-
-### ⭐ Show Your Support
-
-If this action helps your workflow, please consider:
-
-- ⭐ **Starring the repository**
-- 🍴 **Sharing it with your team**
-- 📝 **Contributing improvements**
+- [GitHub Issues](https://github.com/architweb/ClickUpNotification/issues): bugs and feature requests. Please include the action version, logs, steps to reproduce, and expected vs actual behaviour.
+- [Changelog](CHANGELOG): release notes and migration guides.
 
 ---
 
-**Made with ❤️ for the GitHub Actions community**
-
-_© 2025-2026 ArchitWeb. Released under the [MIT License](https://opensource.org/licenses/MIT)._
+_© 2025-2026 ArchitWeb. Released under the [MIT License](LICENSE)._
